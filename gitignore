@@ -1,0 +1,11 @@
+# Generated when the pipeline runs
+logs/
+data/processed/
+data/rejected/
+
+# Python
+__pycache__/
+*.pyc
+
+# Never commit secrets
+.env
