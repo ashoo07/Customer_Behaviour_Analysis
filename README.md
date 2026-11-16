@@ -1,13 +1,82 @@
-# Customer Behaviour Analysis
+# Customer Behaviour Analysis: Data Pipeline & Analytics
 
-An end-to-end retail analytics project: **Python** for cleaning and EDA, **PostgreSQL** for business analysis, and **Power BI** for an interactive dashboard.
+An end-to-end retail data project in two parts:
 
-The goal is to answer practical retail questions. Which categories and age groups drive revenue? Do subscribers spend more? Are discounts actually used? Which customers are loyal?
+1. **Data Engineering:** an automated Python ETL pipeline that extracts raw CSV files, cleans and validates them, and loads them into a **PostgreSQL star schema**.
+2. **Data Analytics:** exploratory analysis in **Python**, business queries in **SQL**, and an interactive **Power BI** dashboard that answer practical retail questions. Which categories and age groups drive revenue? Do subscribers spend more? Are discounts actually used? Which customers are loyal?
+
+Customer Behaviour Dashboard
+<img width="928" height="505" alt="image" src="https://github.com/user-attachments/assets/bd06c4ce-725a-4465-abf2-0b31e611de86" />
 
 
 ---
 
-## Key Findings
+## Architecture
+
+```mermaid
+flowchart LR
+    A[Raw CSV files<br/>customers / products / purchases] --> B[Extract]
+    B --> C[Transform]
+    C --> D[Data quality checks]
+    D -->|good rows| E[Load]
+    D -->|bad rows| R[data/rejected/]
+    E --> F[(PostgreSQL<br/>star schema)]
+    B & C & D & E -.-> L[logs/pipeline.log]
+
+    C --> P[Python EDA<br/>& feature engineering]
+    P --> Q[SQL analysis]
+    P --> H[Power BI dashboard]
+```
+
+---
+
+# Part 1: Data Engineering
+
+## The pipeline
+
+| Stage | File | What happens |
+|---|---|---|
+| Extract | `etl/extract.py` | Reads 3 source CSV files; fails with a clear message if one is missing |
+| Transform | `etl/transform.py` | Standardizes column names, fills 37 missing ratings with the category median, adds `age_group`, `customer_segment`, and `purchase_frequency_days` |
+| Quality checks | `etl/quality.py` | 12 checks (nulls, duplicates, valid ranges and values, foreign-key matches). Bad rows are saved to `data/rejected/` with the reason; the run stops if more than 5% of a table fails |
+| Load | `etl/load.py` | Loads dimension tables first, then the fact table, using the IDs PostgreSQL generates. Safe to re-run: tables are truncated first, so there are no duplicates |
+| Logging | `etl/logger.py` | Writes every step, warning, and error to the screen and to `logs/pipeline.log` |
+| Orchestration | `run_pipeline.py` | Runs all stages in order, logs timings, and exits with an error code on failure |
+
+The database password is read from an environment variable (`DB_PASSWORD`) or typed at run time, never stored in the code.
+
+## Data model (star schema)
+
+```
+dim_customer ─┐
+dim_product  ─┼──►  fact_purchases
+dim_shipping ─┘
+```
+
+| Table | Type | Contents |
+|---|---|---|
+| `fact_purchases` | Fact | One row per purchase: amount, rating, size, color, season, discount, promo code, payment method |
+| `dim_customer` | Dimension | Age, gender, location, subscription status, age group, customer segment |
+| `dim_product` | Dimension | Item and category |
+| `dim_shipping` | Dimension | Shipping type |
+
+Table definitions: [`sql/create_tables.sql`](sql/create_tables.sql)
+
+Example query against the warehouse:
+
+```sql
+SELECT p.category, ROUND(SUM(f.purchase_amount_usd), 0) AS revenue
+FROM fact_purchases f
+JOIN dim_product p ON f.product_id = p.product_id
+GROUP BY p.category
+ORDER BY revenue DESC;
+```
+
+---
+
+# Part 2: Data Analytics
+
+## Key findings
 
 Based on 3,900 purchase records totalling **$233,081** in revenue (average purchase: **$59.76**).
 
@@ -21,50 +90,14 @@ Based on 3,900 purchase records totalling **$233,081** in revenue (average purch
 
 **Business takeaway:** revenue is concentrated in Clothing and Accessories (about 77%), and spend is nearly flat across age groups and subscription status. Growth is more likely to come from retaining the large loyal base, making subscriptions more valuable, and recruiting new customers than from targeting a particular age group.
 
----
+## Analysis workflow
 
-## Dataset
-
-File: `customer_shopping_behavior.csv`
-
-Each row is a customer purchase record. Fields include:
-
-| Area | Fields |
-|---|---|
-| Customer | demographics (e.g. age, gender), subscription status |
-| Purchase | product category, items purchased, purchase amount, previous purchases, purchase frequency |
-| Behaviour | review rating, discount usage, shipping method |
-
-3,900 records and 18 columns. Review Rating has 37 missing values, which are handled in the cleaning step.
-
-
----
-
-## Tech Stack
-
-| Tool | Used for |
-|---|---|
-| Python (Pandas, NumPy) | Data cleaning, feature engineering, EDA |
-| Jupyter Notebook | Analysis environment |
-| SQLAlchemy, psycopg2 | Loading cleaned data into PostgreSQL |
-| PostgreSQL | Business queries |
-| Power BI | Interactive dashboard |
-
----
-
-## Workflow
-
-### 1. Python: cleaning and EDA
-- Loaded the dataset and checked structure, data types, and missing values
-- Handled missing values and standardized column names and types
-- Engineered new features:
-  - **Age groups**
-  - **Purchase frequency in days**
-  - **Customer segments**
+**Python: cleaning and EDA**
+- Checked structure, data types, and missing values; standardized column names and types
+- Engineered features: age groups, purchase frequency in days, customer segments
 - Explored spending, ratings, categories, and subscriptions
 
-### 2. PostgreSQL: business analysis
-Loaded the cleaned data into PostgreSQL and wrote queries for:
+**SQL (PostgreSQL): business analysis** (`customer_behaviour.sql`)
 - Revenue by gender and by category
 - Average customer spend
 - Top-rated products
@@ -74,61 +107,122 @@ Loaded the cleaned data into PostgreSQL and wrote queries for:
 - Customer segmentation
 - Revenue contribution by age group
 
-### 3. Power BI: dashboard
-An interactive dashboard with filters, covering:
-- Total revenue, total customers, average purchase amount
+**Power BI: dashboard**
+- KPI cards: total revenue, total customers, average purchase amount
 - Revenue by category and by age group
-- Customer segments
-- Subscription analysis
-- Product performance
-- Discount trends
+- Customer segments, subscription analysis, product performance, and discount trends
+- Interactive filters
 
 ---
 
-## Repository Contents
+## Dataset
+
+Source file: `customer_shopping_behavior.csv`. 3,900 records and 18 columns, where each row is a customer purchase.
+
+| Area | Fields |
+|---|---|
+| Customer | age, gender, location, subscription status, previous purchases, purchase frequency |
+| Purchase | item, category, purchase amount, size, color, season, payment method |
+| Behaviour | review rating, discount applied, promo code used, shipping type |
+
+Review Rating has 37 missing values, which are handled in the transform step.
+<!-- TODO: add the data source link (e.g. Kaggle) if applicable -->
+
+---
+
+## Tech stack
+
+| Area | Tools |
+|---|---|
+| Data engineering | Python, Pandas, SQLAlchemy, psycopg2, PostgreSQL, Windows Task Scheduler |
+| Analytics | Python (Pandas, NumPy, Matplotlib, Seaborn), SQL, Jupyter Notebook, Power BI |
+| Other | Git, GitHub |
+
+---
+
+## Project structure
 
 ```
 Customer_Behaviour_Analysis/
-├── DA Project (shopping analysis) (1).ipynb   # Python cleaning, feature engineering, EDA
-├── customer_behaviour.sql                     # PostgreSQL business queries
+├── data/raw/                  # source CSV files (created by split_csv.py)
+├── etl/
+│   ├── extract.py
+│   ├── transform.py
+│   ├── quality.py
+│   ├── load.py
+│   └── logger.py
+├── sql/
+│   └── create_tables.sql      # star schema definition
+├── split_csv.py               # splits the original dataset into 3 source files
+├── run_pipeline.py            # runs the whole pipeline
+├── run_pipeline.bat           # launcher for Task Scheduler
+├── requirements.txt
+├── DA Project (shopping analysis) (1).ipynb   # Python cleaning, features, EDA
+├── customer_behaviour.sql                     # SQL business analysis
 ├── customer_behaviour_dashboard.pbix          # Power BI dashboard
-├── customer_shopping_behavior.csv             # Raw dataset
+├── customer_shopping_behavior.csv             # original dataset
 ├── LICENSE
 └── README.md
 ```
+<!-- TODO: confirm the .pbix and notebook file names match your repo -->
+
+Generated at run time and not stored in the repo: `logs/`, `data/processed/`, `data/rejected/`.
 
 ---
 
-## How to Run
+## How to run
 
-**1. Clone the repo**
+### The ETL pipeline
+
+**1. Clone and install**
 ```bash
 git clone https://github.com/ashoo07/Customer_Behaviour_Analysis.git
 cd Customer_Behaviour_Analysis
+pip install -r requirements.txt
 ```
 
-**2. Python**
+**2. Create the source files**
 ```bash
-pip install pandas numpy sqlalchemy psycopg2-binary jupyter
-jupyter notebook
+python split_csv.py
 ```
-Open the notebook and run the cells in order. It cleans the data and prepares it for loading into PostgreSQL.
 
-**3. PostgreSQL**
-1. Create a database (e.g. `customer_behaviour`).
-2. Load the cleaned dataset into a table from the notebook (via SQLAlchemy) or with your preferred import method.
-3. Run `customer_behaviour.sql` to reproduce the analysis.
+**3. Create the database**
+Create a database named `customer_dw` in PostgreSQL, then run `sql/create_tables.sql` in it.
 
-**4. Power BI**
-1. Open `customer_behaviour_dashboard.pbix` in Power BI Desktop.
-2. If prompted, update the PostgreSQL connection to point at your database.
-3. Refresh the data and explore using the filters.
+**4. Set the database password**
+```bash
+setx DB_PASSWORD "your_password"
+```
+Open a new terminal afterwards. If the variable isn't set, the pipeline asks for the password when it runs.
+
+**5. Run the pipeline**
+```bash
+python run_pipeline.py
+```
+Add `--no-load` for a dry run that skips the database step. To run it daily, point Windows Task Scheduler at `run_pipeline.bat`.
+
+### The analysis
+
+1. Open the notebook and run the cells in order to reproduce the cleaning and EDA.
+2. Run `customer_behaviour.sql` in PostgreSQL to reproduce the SQL analysis.
+3. Open the `.pbix` file in Power BI Desktop, update the data source if prompted, and refresh.
 
 ---
 
-## Skills Demonstrated
+## Skills demonstrated
 
-Data cleaning · Feature engineering · Exploratory data analysis · SQL (PostgreSQL) · Customer segmentation · Dashboard design · Business storytelling
+**Data engineering:** ETL design · Python scripting · Star schema modelling · PostgreSQL · Data quality validation · Error logging · Pipeline automation
+
+**Data analysis:** Data cleaning · Feature engineering · Exploratory data analysis · SQL · Customer segmentation · Dashboard design · Business storytelling
+
+---
+
+## Possible next steps
+
+- Orchestrate with Apache Airflow
+- Add incremental loading instead of a full reload
+- Add unit tests for the transform and quality functions
+- Connect the Power BI dashboard directly to the star schema
 
 ---
 
